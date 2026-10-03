@@ -1,0 +1,14 @@
+{
+  "name": "demo-builder-block-library",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Optional Edge Delivery Services blocks that Demo Builder can copy into a storefront",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

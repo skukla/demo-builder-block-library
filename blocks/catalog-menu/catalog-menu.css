@@ -1,0 +1,4 @@
+/* The block only rewrites the nav list and then removes itself; never show its table. */
+.catalog-menu {
+  display: none;
+}
