@@ -173,7 +173,7 @@ test('B2B: a category the shopper\'s group cannot search is left out of the menu
 
 test('B2B: a parent with no products of its own stays when one of its children is visible', async () => {
   const { document, block } = setup('<li>Shop the catalog</li>');
-  // Measured shape on Justrite, 2026-10-01: the shared catalogs granted the
+  // Measured shape on a B2B demo store, 2026-10-01: the shared catalogs granted the
   // sub-categories but not Safety Signs itself.
   const { fetchGraphQl } = fakeFetch({ empty: ['safety-signs', 'safety-signs/fire-signs'] });
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
