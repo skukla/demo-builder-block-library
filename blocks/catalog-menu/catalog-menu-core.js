@@ -6,6 +6,14 @@
  *   Shop the catalog                    -> one menu entry per top-level category
  *   Shop the catalog: Signs and Labels  -> that category, its sub-categories as links
  *
+ * The block's own table may carry two-cell rows, "category url path | page":
+ *
+ *   signs | /safety-signage             -> the Signs entry links to /safety-signage
+ *
+ * A category page can live at any address; a row says where, when it is not at the
+ * category's own url path. Demo Builder writes one for each hand-built category page it
+ * finds, and an author can type one to point any category at any page.
+ *
  * The header loads the nav as a fragment, and the fragment decorates and loads its
  * blocks BEFORE the header reads the list (`blocks/fragment/fragment.js`: `decorateMain`,
  * then `await loadSections`). So this block runs first and rewrites those lines in place.
@@ -57,6 +65,44 @@ export function findMenuLines(root) {
     .map((li) => ({ li, match: ownText(li).match(LINE_PATTERN) }))
     .filter(({ match }) => match)
     .map(({ li, match }) => ({ li, name: match[1] ? match[1].trim() : null }));
+}
+
+/** A category url path as an author types it: any case, stray slashes. */
+function pathKey(urlPath) {
+  return normalise(urlPath).replace(/^\/+|\/+$/g, '');
+}
+
+/** A page as an author types it: a path, or a pasted link (its path and query are kept). */
+function pagePath(cell) {
+  const link = cell.querySelector('a[href]');
+  const text = (link ? link.getAttribute('href') : cell.textContent).trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      return `${url.pathname}${url.search}`;
+    } catch {
+      return null;
+    }
+  }
+  return text.startsWith('/') ? text : `/${text}`;
+}
+
+/**
+ * The block table's "category url path | page" rows.
+ *
+ * @param {Element} block the catalog-menu block
+ * @returns {Map<string, string>} category url path (lower case, no outer slashes) -> page
+ */
+export function readPageLinks(block) {
+  const links = new Map();
+  [...block.children].forEach((row) => {
+    const [category, page] = row.children;
+    const key = category ? pathKey(category.textContent) : '';
+    const path = page ? pagePath(page) : null;
+    if (key && path && !links.has(key)) links.set(key, path);
+  });
+  return links;
 }
 
 function byPosition(a, b) {
@@ -129,10 +175,57 @@ async function keepVisible(tree, fetchGraphQl) {
     .filter((node) => visible.has(node.id) || node.children.length > 0);
 }
 
-function entryFor(document, node) {
+/**
+ * Where a category with no page of its own sends the shopper: the search page, filtered
+ * to that category. The search page's list block reads `?filter=` (its `search-url.js`)
+ * and turns `categoryPath:<urlPath>` into an `in` filter, which Catalog Service answers
+ * the same as the `eq` a category page sends (measured 2026-10-05).
+ *
+ * `search-url.js` reads a value with a hyphen between two numbers as a price range, and
+ * splits on a comma; a url path shaped like either cannot be a filter, so it keeps its
+ * own (missing) page rather than a wrong search.
+ *
+ * @param {string} urlPath the category's url path
+ * @returns {string|null} the search link, or null when the path cannot be a filter
+ */
+export function searchFallbackHref(urlPath) {
+  if (/,/.test(urlPath)) return null;
+  const [from, to] = urlPath.split('-');
+  if (to !== undefined && Number.isFinite(Number(from)) && Number.isFinite(Number(to))) return null;
+  return `/search?filter=${encodeURIComponent(`categoryPath:${urlPath}`)}`;
+}
+
+/**
+ * The shown categories that have no page yet (a category the table links to a page is
+ * not asked about). A category added in Commerce after the
+ * storefront was set up is in the menu at once, but its page arrives only at the next
+ * republish or reset. A probe that fails says nothing, so that link stays as it is.
+ */
+async function missingPages(tree, pageExists, links) {
+  if (!pageExists) return new Set();
+  // A category with a row in the table has a page: the row says where.
+  const nodes = shownNodes(tree).filter((node) => !links.has(pathKey(node.urlPath)));
+  const answers = await Promise.all(nodes.map(async (node) => {
+    try {
+      return await pageExists(`/${node.urlPath}`);
+    } catch {
+      return true;
+    }
+  }));
+  return new Set(nodes.filter((_, i) => answers[i] === false).map((n) => n.id));
+}
+
+function hrefFor(node, { missing, links }) {
+  const linked = links.get(pathKey(node.urlPath));
+  if (linked) return linked;
+  const fallback = missing.has(node.id) ? searchFallbackHref(node.urlPath) : null;
+  return fallback || `/${node.urlPath}`;
+}
+
+function entryFor(document, node, pages) {
   const li = document.createElement('li');
   const link = document.createElement('a');
-  link.href = `/${node.urlPath}`;
+  link.href = hrefFor(node, pages);
   link.textContent = node.name;
   li.append(link);
   if (node.children.length) {
@@ -140,7 +233,7 @@ function entryFor(document, node) {
     node.children.forEach((child) => {
       const item = document.createElement('li');
       const childLink = document.createElement('a');
-      childLink.href = `/${child.urlPath}`;
+      childLink.href = hrefFor(child, pages);
       childLink.textContent = child.name;
       item.append(childLink);
       list.append(item);
@@ -156,10 +249,10 @@ function plainEntry(document, text) {
   return li;
 }
 
-function renderLine(line, tree, logger) {
+function renderLine(line, tree, logger, pages) {
   const document = line.li.ownerDocument;
   if (!line.name) {
-    line.li.replaceWith(...tree.map((node) => entryFor(document, node)));
+    line.li.replaceWith(...tree.map((node) => entryFor(document, node, pages)));
     return;
   }
   const node = findByName(tree, line.name);
@@ -168,7 +261,7 @@ function renderLine(line, tree, logger) {
     line.li.replaceWith(plainEntry(document, line.name));
     return;
   }
-  line.li.replaceWith(entryFor(document, node));
+  line.li.replaceWith(entryFor(document, node, pages));
 }
 
 /** Without the catalog: bare lines go, named lines keep their words. */
@@ -198,10 +291,14 @@ function removeBlock(block) {
  * @param {Function} fetchGraphQl the storefront's Catalog Service client
  *   (`CS_FETCH_GRAPHQL.fetchGraphQl`), so the shopper's own scope headers apply
  * @param {{warn: Function, error: Function}} logger console by default
+ * @param {Function} [pageExists] answers whether the storefront has a page at a path;
+ *   a category without one links to the filtered search page. Absent: no check. A
+ *   category the block's table links to a page is never checked.
  */
-export async function buildCatalogMenu(block, fetchGraphQl, logger = console) {
+export async function buildCatalogMenu(block, fetchGraphQl, logger = console, pageExists = null) {
   const root = block.closest('main') || block.ownerDocument;
   const lines = findMenuLines(root);
+  const links = readPageLinks(block);
   removeBlock(block);
   if (lines.length === 0) return;
 
@@ -209,7 +306,8 @@ export async function buildCatalogMenu(block, fetchGraphQl, logger = console) {
     const data = await runQuery(fetchGraphQl, CATEGORIES_QUERY, { roles: MENU_ROLES });
     let tree = buildTree(data.categories);
     if (FILTER_BY_VISIBLE_PRODUCTS) tree = await keepVisible(tree, fetchGraphQl);
-    lines.forEach((line) => renderLine(line, tree, logger));
+    const missing = await missingPages(tree, pageExists, links);
+    lines.forEach((line) => renderLine(line, tree, logger, { missing, links }));
   } catch (error) {
     logger.error(`catalog-menu: could not read the category tree: ${error.message}`);
     renderWithoutCatalog(lines);

@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-import { buildCatalogMenu } from '../blocks/catalog-menu/catalog-menu-core.js';
+import { buildCatalogMenu, readPageLinks, searchFallbackHref } from '../blocks/catalog-menu/catalog-menu-core.js';
 import decorate from '../blocks/catalog-menu/catalog-menu.js';
 
 const CATEGORIES = [
@@ -44,12 +44,13 @@ const NAV = `
     <li><p>Resources</p><ul><li><a href="/guides">Guides</a></li></ul></li>
   </ul></div></div>
   <div class="section"><div class="default-content-wrapper"><p>Tools</p></div>
-    <div class="catalog-menu-wrapper"><div class="catalog-menu block" data-block-name="catalog-menu"><div><div></div></div></div></div>
+    <div class="catalog-menu-wrapper"><div class="catalog-menu block" data-block-name="catalog-menu"><div><div></div></div>ROWS</div></div>
   </div>
 </main>`;
 
-function setup(lines) {
-  const dom = new JSDOM(`<!doctype html><body>${NAV.replace('LINES', lines)}</body>`);
+/** `rows`: the block table's "category url path | page" rows, as the nav fragment decorates them. */
+function setup(lines, rows = '') {
+  const dom = new JSDOM(`<!doctype html><body>${NAV.replace('LINES', lines).replace('ROWS', rows)}</body>`);
   const { document } = dom.window;
   return { document, block: document.querySelector('.catalog-menu') };
 }
@@ -239,4 +240,125 @@ test('in its own section (where Demo Builder puts it) the block takes that secti
 
   assert.equal(document.querySelectorAll('main > .section').length, 3);
   assert.equal(document.querySelector('main > .section:last-child').textContent.trim(), 'Tools');
+});
+
+test('a category with no page yet links to the search page filtered to it; one with a page keeps its link', async () => {
+  // A category added in Commerce after setup: in the menu at once, its page only at
+  // the next republish or reset. Until then the link must not land on a 404.
+  const { document, block } = setup('<li>Shop the catalog</li>');
+  const probed = [];
+  const pageExists = async (path) => {
+    probed.push(path);
+    return path !== '/safety-signs/fire-signs';
+  };
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
+
+  assert.equal(linkOf(document, 'Fire Signs'), '/search?filter=categoryPath%3Asafety-signs%2Ffire-signs');
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
+  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
+  assert.ok(probed.includes('/safety-cabinets/flammable'));
+});
+
+test('a page check that fails leaves the link as it is', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>');
+  const pageExists = async () => {
+    throw new Error('offline');
+  };
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
+  assert.equal(linkOf(document, 'Fire Signs'), '/safety-signs/fire-signs');
+});
+
+test('the fallback is the filter the search page reads back to the same category', () => {
+  // search-url.js: URLSearchParams.get decodes once, then decodeURIComponent again,
+  // then splits "attribute:value" on the first colon.
+  const href = searchFallbackHref('signs/danger-signs');
+  const filter = new URL(href, 'https://example.com').searchParams.get('filter');
+  assert.equal(decodeURIComponent(filter), 'categoryPath:signs/danger-signs');
+  assert.equal(searchFallbackHref('5s-visual-workplace'), '/search?filter=categoryPath%3A5s-visual-workplace');
+});
+
+test('a url path the search page would misread (a number range, a comma) gets no fallback', () => {
+  assert.equal(searchFallbackHref('10-20'), null);
+  assert.equal(searchFallbackHref('a,b'), null);
+});
+
+test('decorate hands its page check to the menu', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>');
+  await decorate(block, {
+    fetchGraphQl: fakeFetch().fetchGraphQl,
+    logger: quietLogger().logger,
+    pageExists: async (path) => path !== '/safety-cabinets',
+  });
+  assert.equal(linkOf(document, 'Safety Cabinets'), '/search?filter=categoryPath%3Asafety-cabinets');
+});
+
+/*
+ * Category -> page rows. A category page may live at any address; when it is not at
+ * the category's own url path, a two-cell row in the block's table says where it is.
+ * Demo Builder writes a row for each hand-built page it finds, and an author can type
+ * one to point any category at any page.
+ */
+const pageRow = (urlPath, page) => `<div><div>${urlPath}</div><div>${page}</div></div>`;
+
+test('a category with a row in the table links to the page the row names', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-signs', '/safety-signage'));
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
+
+  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signage');
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
+  assert.equal(linkOf(document, 'Safety Cabinets'), '/safety-cabinets');
+});
+
+test('a row works for a sub-category and under a named line too', async () => {
+  const { document, block } = setup(
+    '<li>Shop the catalog: Safety Signs</li>',
+    pageRow('safety-signs/exit-signs', '/exits'),
+  );
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
+
+  assert.equal(linkOf(document, 'Exit Signs'), '/exits');
+  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
+});
+
+test('a category with a row has a page: it is not probed and never falls back to search', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-signs', '/safety-signage'));
+  const probed = [];
+  const pageExists = async (path) => {
+    probed.push(path);
+    return false;
+  };
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
+
+  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signage');
+  assert.ok(!probed.includes('/safety-signs'));
+  assert.ok(!probed.includes('/safety-signage'));
+  // An unmapped category with no page still gets the search fallback.
+  assert.equal(linkOf(document, 'Safety Cabinets'), '/search?filter=categoryPath%3Asafety-cabinets');
+});
+
+test('rows are read the way an author types them: any case, stray slashes, paragraphs, a pasted link', () => {
+  const { block } = setup('', [
+    '<div><div><p> /Safety-Signs/ </p></div><div><p>safety-signage</p></div></div>',
+    '<div><div>safety-cabinets</div><div><a href="https://main--site--org.aem.live/cabinets?x=1">https://main--site--org.aem.live/cabinets?x=1</a></div></div>',
+    '<div><div>only-one-cell</div></div>',
+    '<div><div>no-page</div><div></div></div>',
+  ].join(''));
+
+  assert.deepEqual([...readPageLinks(block)], [
+    ['safety-signs', '/safety-signage'],
+    ['safety-cabinets', '/cabinets?x=1'],
+  ]);
+});
+
+test('a table with no rows changes nothing', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>');
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
+  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
+});
+
+test('a mapped category still drops out of the menu when the shopper can see none of its products', async () => {
+  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-cabinets', '/cabinets'));
+  const { fetchGraphQl } = fakeFetch({ empty: ['safety-cabinets', 'safety-cabinets/flammable'] });
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
+  assert.deepEqual(topLevel(document), ['Custom Signs', 'Safety Signs', 'Resources']);
 });

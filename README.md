@@ -30,8 +30,28 @@ it at the end).
 - Hand-typed items keep their place; each line expands where it sits.
 - To hide a category, turn off **Include in Menu** on it in Commerce.
 - No line, no change: the nav is exactly what was authored.
-- Each link points at `/<category url path>`. That page must exist (one page per
-  category holding a `product-list-page` block); Demo Builder writes them.
+- Each link points at `/<category url path>`, the page holding that category's
+  `product-list-page` block. Demo Builder writes those pages when it sets the
+  storefront up, and again on every republish and reset.
+- A category page can live at any address. To link a category to a page that is not
+  at its url path, add a two-cell row to the `catalog-menu` table: the category's url
+  path, then the page.
+
+  ```
+  catalog-menu
+  signs              | /safety-signage
+  signs/danger-signs | /danger
+  ```
+
+  Demo Builder writes a row for each hand-built category page it finds (a page whose
+  `product-list-page` block names the category), and writes no page of its own for
+  that category. Rows you type are yours: Demo Builder never changes or removes them.
+  A category with a row is taken to have a page, so it is not checked and never falls
+  back to search.
+- A category added in Commerce after that is in the menu at once, before its page
+  exists. Until the next republish its link goes to the search page filtered to that
+  category (`/search?filter=categoryPath:<url path>`), so it never lands on a 404. The
+  block checks each shown category with one `HEAD` request to its page.
 
 **How it works.** The header loads the nav as a fragment, and the fragment decorates
 and loads its blocks before the header reads the list. This block runs then, reads
