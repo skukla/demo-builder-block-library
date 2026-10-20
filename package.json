@@ -5,7 +5,7 @@
   "description": "Optional Edge Delivery Services blocks that Demo Builder can copy into a storefront",
   "type": "module",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test 'test/**/*.test.js'"
   },
   "license": "Apache-2.0",
   "devDependencies": {
