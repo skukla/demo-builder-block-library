@@ -16,14 +16,19 @@ category pages without anyone hand-typing them.
 
 ```
 Custom Signs                        <- typed by hand, stays as typed
-Shop the catalog                    <- one menu entry per top-level category
-Shop the catalog: Signs and Labels  <- that category, its sub-categories as links
+Commerce: All                       <- one menu entry per top-level category
+Commerce: Signs and Labels          <- that category, its sub-categories as links
 Resources                           <- typed by hand
 ```
 
 and put a one-cell `catalog-menu` table anywhere in the nav document (Demo Builder adds
 it at the end).
 
+- Every line is "Commerce:" and then which categories, so a menu item that is just
+  "Commerce" stays as typed. A category actually named "All" cannot be picked on its own.
+- The line was "Shop the catalog" until 2026-10-25. Demo Builder rewrites it to
+  "Commerce: All" when it updates a storefront to this block; an older copy of the block
+  still reads the old line.
 - Categories are named the way Commerce names them, not by path or id. Case and extra
   spaces do not matter. A name that matches nothing shows as plain text and the
   browser console names it.

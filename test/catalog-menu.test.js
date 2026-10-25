@@ -87,8 +87,8 @@ const topLevel = (document) => [...document.querySelectorAll('.default-content-w
 const linkOf = (document, text) => [...document.querySelectorAll('a')]
   .find((a) => a.textContent === text)?.getAttribute('href');
 
-test('a bare "Shop the catalog" line becomes one entry per top-level category, in place', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+test('a "Commerce: All" line becomes one entry per top-level category, in place', async () => {
+  const { document, block } = setup('<li>Commerce: All</li>');
   const { fetchGraphQl } = fakeFetch();
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
 
@@ -99,7 +99,7 @@ test('a bare "Shop the catalog" line becomes one entry per top-level category, i
 });
 
 test('a named line becomes that category with its sub-categories as links', async () => {
-  const { document, block } = setup('<li>Shop the catalog: Safety Signs</li>');
+  const { document, block } = setup('<li>Commerce: Safety Signs</li>');
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
 
   assert.deepEqual(topLevel(document), ['Custom Signs', 'Safety Signs', 'Resources']);
@@ -109,14 +109,30 @@ test('a named line becomes that category with its sub-categories as links', asyn
 });
 
 test('the category name is matched the way Commerce spells it, ignoring case and spacing', async () => {
-  const { document, block } = setup('<li><p>shop the catalog:   exit signs </p></li>');
+  const { document, block } = setup('<li><p>commerce:   exit signs </p></li>');
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
 
   assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
 });
 
+test('"all" after the colon means every top-level category, in any case', async () => {
+  const { document, block } = setup('<li><p>COMMERCE :  all </p></li>');
+  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
+
+  assert.deepEqual(topLevel(document), ['Custom Signs', 'Safety Cabinets', 'Safety Signs', 'Resources']);
+});
+
+test('a menu item that is just "Commerce", or the old "Shop the catalog", stays as typed', async () => {
+  const { document, block } = setup('<li>Commerce</li><li>Shop the catalog</li>');
+  const { fetchGraphQl, calls } = fakeFetch();
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
+
+  assert.deepEqual(topLevel(document), ['Custom Signs', 'Commerce', 'Shop the catalog', 'Resources']);
+  assert.equal(calls.length, 0, 'no line to fill, so Commerce is never asked');
+});
+
 test('a name that matches nothing renders as plain text and the console names it', async () => {
-  const { document, block } = setup('<li>Shop the catalog: Lockout</li>');
+  const { document, block } = setup('<li>Commerce: Lockout</li>');
   const log = quietLogger();
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, log.logger);
 
@@ -127,7 +143,7 @@ test('a name that matches nothing renders as plain text and the console names it
 });
 
 test('hand-typed items keep their content and their place', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
 
   assert.equal(linkOf(document, 'Guides'), '/guides');
@@ -146,7 +162,7 @@ test('no line, no change: nothing is queried and the list is exactly as authored
 });
 
 test('the block removes itself so nothing of it renders in the header', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
 
   assert.equal(document.querySelector('.catalog-menu'), null);
@@ -154,7 +170,7 @@ test('the block removes itself so nothing of it renders in the header', async ()
 });
 
 test('asks Catalog Service only for categories marked "Include in Menu"', async () => {
-  const { block } = setup('<li>Shop the catalog</li>');
+  const { block } = setup('<li>Commerce: All</li>');
   const { fetchGraphQl, calls } = fakeFetch();
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
 
@@ -163,7 +179,7 @@ test('asks Catalog Service only for categories marked "Include in Menu"', async 
 });
 
 test('B2B: a category the shopper\'s group cannot search is left out of the menu', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   const { fetchGraphQl } = fakeFetch({ empty: ['safety-cabinets', 'safety-cabinets/flammable', 'safety-signs/fire-signs'] });
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
 
@@ -173,7 +189,7 @@ test('B2B: a category the shopper\'s group cannot search is left out of the menu
 });
 
 test('B2B: a parent with no products of its own stays when one of its children is visible', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   // Measured shape on a B2B demo store, 2026-10-01: the shared catalogs granted the
   // sub-categories but not Safety Signs itself.
   const { fetchGraphQl } = fakeFetch({ empty: ['safety-signs', 'safety-signs/fire-signs'] });
@@ -184,7 +200,7 @@ test('B2B: a parent with no products of its own stays when one of its children i
 });
 
 test('the visibility check sends the same filter the product list page sends, as variables', async () => {
-  const { block } = setup('<li>Shop the catalog</li>');
+  const { block } = setup('<li>Commerce: All</li>');
   const { fetchGraphQl, calls } = fakeFetch();
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
 
@@ -196,7 +212,7 @@ test('the visibility check sends the same filter the product list page sends, as
 });
 
 test('when Catalog Service cannot be reached the nav still renders: bare lines go, named lines stay as text', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li><li>Shop the catalog: Safety Signs</li>');
+  const { document, block } = setup('<li>Commerce: All</li><li>Commerce: Safety Signs</li>');
   const log = quietLogger();
   await buildCatalogMenu(block, fakeFetch({ fail: true }).fetchGraphQl, log.logger);
 
@@ -207,7 +223,7 @@ test('when Catalog Service cannot be reached the nav still renders: bare lines g
 });
 
 test('GraphQL errors in the response are treated as a failure, not as an empty catalog', async () => {
-  const { document, block } = setup('<li>Shop the catalog: Safety Signs</li>');
+  const { document, block } = setup('<li>Commerce: Safety Signs</li>');
   const log = quietLogger();
   const fetchGraphQl = async () => ({ errors: [{ message: 'Cannot query field "categories"' }] });
   await buildCatalogMenu(block, fetchGraphQl, log.logger);
@@ -218,7 +234,7 @@ test('GraphQL errors in the response are treated as a failure, not as an empty c
 });
 
 test('decorate takes the storefront\'s own Catalog Service client when it is handed one', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   const { fetchGraphQl, calls } = fakeFetch();
   await decorate(block, { fetchGraphQl, logger: quietLogger().logger });
 
@@ -231,7 +247,7 @@ test('in its own section (where Demo Builder puts it) the block takes that secti
   // empty one must not be left behind in the nav.
   const dom = new JSDOM(`<!doctype html><body><main>
     <div class="section"><div class="default-content-wrapper"><p>Brand</p></div></div>
-    <div class="section"><div class="default-content-wrapper"><ul><li>Shop the catalog</li></ul></div></div>
+    <div class="section"><div class="default-content-wrapper"><ul><li>Commerce: All</li></ul></div></div>
     <div class="section"><div class="default-content-wrapper"><p>Tools</p></div></div>
     <div class="section catalog-menu-container"><div class="catalog-menu-wrapper"><div class="catalog-menu block"><div><div></div></div></div></div></div>
   </main></body>`);
@@ -245,7 +261,7 @@ test('in its own section (where Demo Builder puts it) the block takes that secti
 test('a category with no page yet links to the search page filtered to it; one with a page keeps its link', async () => {
   // A category added in Commerce after setup: in the menu at once, its page only at
   // the next republish or reset. Until then the link must not land on a 404.
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   const probed = [];
   const pageExists = async (path) => {
     probed.push(path);
@@ -260,7 +276,7 @@ test('a category with no page yet links to the search page filtered to it; one w
 });
 
 test('a page check that fails leaves the link as it is', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   const pageExists = async () => {
     throw new Error('offline');
   };
@@ -283,7 +299,7 @@ test('a url path the search page would misread (a number range, a comma) gets no
 });
 
 test('decorate hands its page check to the menu', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   await decorate(block, {
     fetchGraphQl: fakeFetch().fetchGraphQl,
     logger: quietLogger().logger,
@@ -301,7 +317,7 @@ test('decorate hands its page check to the menu', async () => {
 const pageRow = (urlPath, page) => `<div><div>${urlPath}</div><div>${page}</div></div>`;
 
 test('a category with a row in the table links to the page the row names', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-signs', '/safety-signage'));
+  const { document, block } = setup('<li>Commerce: All</li>', pageRow('safety-signs', '/safety-signage'));
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
 
   assert.equal(linkOf(document, 'Safety Signs'), '/safety-signage');
@@ -311,7 +327,7 @@ test('a category with a row in the table links to the page the row names', async
 
 test('a row works for a sub-category and under a named line too', async () => {
   const { document, block } = setup(
-    '<li>Shop the catalog: Safety Signs</li>',
+    '<li>Commerce: Safety Signs</li>',
     pageRow('safety-signs/exit-signs', '/exits'),
   );
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
@@ -321,7 +337,7 @@ test('a row works for a sub-category and under a named line too', async () => {
 });
 
 test('a category with a row has a page: it is not probed and never falls back to search', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-signs', '/safety-signage'));
+  const { document, block } = setup('<li>Commerce: All</li>', pageRow('safety-signs', '/safety-signage'));
   const probed = [];
   const pageExists = async (path) => {
     probed.push(path);
@@ -351,13 +367,13 @@ test('rows are read the way an author types them: any case, stray slashes, parag
 });
 
 test('a table with no rows changes nothing', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>');
+  const { document, block } = setup('<li>Commerce: All</li>');
   await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger);
   assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
 });
 
 test('a mapped category still drops out of the menu when the shopper can see none of its products', async () => {
-  const { document, block } = setup('<li>Shop the catalog</li>', pageRow('safety-cabinets', '/cabinets'));
+  const { document, block } = setup('<li>Commerce: All</li>', pageRow('safety-cabinets', '/cabinets'));
   const { fetchGraphQl } = fakeFetch({ empty: ['safety-cabinets', 'safety-cabinets/flammable'] });
   await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
   assert.deepEqual(topLevel(document), ['Custom Signs', 'Safety Signs', 'Resources']);

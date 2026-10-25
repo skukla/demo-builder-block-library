@@ -3,8 +3,13 @@
  *
  * The nav document carries ordinary list lines an author types in words:
  *
- *   Shop the catalog                    -> one menu entry per top-level category
- *   Shop the catalog: Signs and Labels  -> that category, its sub-categories as links
+ *   Commerce: All                       -> one menu entry per top-level category
+ *   Commerce: Signs and Labels          -> that category, its sub-categories as links
+ *
+ * One rule, "Commerce: <which>", so a bare "Commerce" a menu might really carry is left
+ * alone. A category actually named "All" cannot be picked on its own this way. The line
+ * read "Shop the catalog" until 2026-10-25; Demo Builder rewrites an old nav to this
+ * line when it updates a storefront to this block.
  *
  * The block's own table may carry two-cell rows, "category url path | page":
  *
@@ -21,8 +26,10 @@
  * Kept free of storefront imports so it can be tested with a fake fetch.
  */
 
-/** "Shop the catalog" or "Shop the catalog: <category name>", any case. */
-const LINE_PATTERN = /^shop the catalog\s*(?::\s*(.*))?$/i;
+/** "Commerce: All" or "Commerce: <category name>", any case. */
+const LINE_PATTERN = /^commerce\s*:\s*(.+)$/i;
+/** The words after "Commerce:" that mean every top-level category. */
+const ALL = 'all';
 
 /**
  * Categories whose "Include in Menu" switch is on. The role name is the one the
@@ -59,12 +66,15 @@ function ownText(li) {
     .trim();
 }
 
-/** Every "Shop the catalog" line in the document the block sits in. */
+/** Every "Commerce:" line in the document the block sits in; `name` null means all. */
 export function findMenuLines(root) {
   return [...root.querySelectorAll('li')]
     .map((li) => ({ li, match: ownText(li).match(LINE_PATTERN) }))
     .filter(({ match }) => match)
-    .map(({ li, match }) => ({ li, name: match[1] ? match[1].trim() : null }));
+    .map(({ li, match }) => {
+      const name = match[1].trim();
+      return { li, name: name.toLowerCase() === ALL ? null : name };
+    });
 }
 
 /** A category url path as an author types it: any case, stray slashes. */
@@ -285,7 +295,7 @@ function removeBlock(block) {
 }
 
 /**
- * Rewrite every "Shop the catalog" line in the nav the block sits in.
+ * Rewrite every "Commerce:" line in the nav the block sits in.
  *
  * @param {Element} block the catalog-menu block
  * @param {Function} fetchGraphQl the storefront's Catalog Service client

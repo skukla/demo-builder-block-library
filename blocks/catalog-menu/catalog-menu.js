@@ -1,8 +1,8 @@
 /*
  * catalog-menu block (Demo Builder block library).
  *
- * Put a one-cell `catalog-menu` table in the nav document and type "Shop the catalog"
- * (or "Shop the catalog: <category name>") as a line in the menu list. The line is
+ * Put a one-cell `catalog-menu` table in the nav document and type "Commerce: All"
+ * (or "Commerce: <category name>") as a line in the menu list. The line is
  * replaced with the Commerce category tree read from Catalog Service. A two-cell row
  * in the table ("category url path | page") links that category to that page. See
  * catalog-menu-core.js for the rules and README.md for authoring.
