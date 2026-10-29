@@ -17,7 +17,8 @@
  *
  * A category page can live at any address; a row says where, when it is not at the
  * category's own url path. Demo Builder writes one for each hand-built category page it
- * finds, and an author can type one to point any category at any page.
+ * finds, and an author can type one to point any category at any page. Every other
+ * category links its own url path, published or not (see `hrefFor`).
  *
  * The header loads the nav as a fragment, and the fragment decorates and loads its
  * blocks BEFORE the header reads the list (`blocks/fragment/fragment.js`: `decorateMain`,
@@ -167,75 +168,59 @@ async function runQuery(fetchGraphQl, query, variables) {
   return response?.data || {};
 }
 
-/** The nodes a menu can show: every top-level category and its direct children. */
-function shownNodes(tree) {
-  return tree.flatMap((node) => [node, ...node.children]);
+/**
+ * The nodes the lines draw: for "All", every top-level category and its direct children;
+ * for a named line, that category (at any depth) and its direct children. Each once.
+ */
+function drawnNodes(tree, lines) {
+  const drawn = new Map();
+  lines.forEach((line) => {
+    const tops = line.name ? [findByName(tree, line.name)].filter(Boolean) : tree;
+    tops.flatMap((node) => [node, ...node.children]).forEach((n) => drawn.set(n.id, n));
+  });
+  return [...drawn.values()];
 }
 
-async function keepVisible(tree, fetchGraphQl) {
-  const nodes = shownNodes(tree);
+/**
+ * Drop every checked category the shopper cannot see. A checked category stays when one
+ * of the checked categories under it does, as a top-level parent always has. A category
+ * no line draws is not checked and stays, so a named line deeper down still finds its way.
+ */
+function prune(nodes, checked, visible) {
+  return nodes
+    .map((node) => ({ ...node, children: prune(node.children, checked, visible) }))
+    .filter((node) => !checked.has(node.id) || visible.has(node.id)
+      || node.children.some((child) => checked.has(child.id)));
+}
+
+/** One search request for every category the lines draw, whatever its depth. */
+async function keepVisible(tree, lines, fetchGraphQl) {
+  const nodes = drawnNodes(tree, lines);
   if (nodes.length === 0) return tree;
   const { query, variables } = visibilityQuery(nodes.map((n) => n.urlPath));
   const data = await runQuery(fetchGraphQl, query, variables);
   const visible = new Set(nodes
     .filter((_, i) => (data[`c${i}`]?.total_count ?? 0) > 0)
     .map((n) => n.id));
-  return tree
-    .map((node) => ({ ...node, children: node.children.filter((c) => visible.has(c.id)) }))
-    .filter((node) => visible.has(node.id) || node.children.length > 0);
+  return prune(tree, new Set(nodes.map((n) => n.id)), visible);
 }
 
 /**
- * Where a category with no page of its own sends the shopper: the search page, filtered
- * to that category. The search page's list block reads `?filter=` (its `search-url.js`)
- * and turns `categoryPath:<urlPath>` into an `in` filter, which Catalog Service answers
- * the same as the `eq` a category page sends (measured 2026-10-05).
- *
- * `search-url.js` reads a value with a hyphen between two numbers as a price range, and
- * splits on a comma; a url path shaped like either cannot be a filter, so it keeps its
- * own (missing) page rather than a wrong search.
- *
- * @param {string} urlPath the category's url path
- * @returns {string|null} the search link, or null when the path cannot be a filter
+ * A category's link: the page its table row names, else its own url path. The block never
+ * checks that the page is there. A category added in Commerce after the storefront was
+ * set up is in the menu at once, before its page is published; the storefront's 404 page
+ * publishes it on a shopper's first visit, and sends that shopper to search itself when
+ * the store cannot be asked. So the link always names the category's own page, the one
+ * that visit creates.
  */
-export function searchFallbackHref(urlPath) {
-  if (/,/.test(urlPath)) return null;
-  const [from, to] = urlPath.split('-');
-  if (to !== undefined && Number.isFinite(Number(from)) && Number.isFinite(Number(to))) return null;
-  return `/search?filter=${encodeURIComponent(`categoryPath:${urlPath}`)}`;
+function hrefFor(node, links) {
+  return links.get(pathKey(node.urlPath)) || `/${node.urlPath}`;
 }
 
-/**
- * The shown categories that have no page yet (a category the table links to a page is
- * not asked about). A category added in Commerce after the
- * storefront was set up is in the menu at once, but its page arrives only at the next
- * republish or reset. A probe that fails says nothing, so that link stays as it is.
- */
-async function missingPages(tree, pageExists, links) {
-  if (!pageExists) return new Set();
-  // A category with a row in the table has a page: the row says where.
-  const nodes = shownNodes(tree).filter((node) => !links.has(pathKey(node.urlPath)));
-  const answers = await Promise.all(nodes.map(async (node) => {
-    try {
-      return await pageExists(`/${node.urlPath}`);
-    } catch {
-      return true;
-    }
-  }));
-  return new Set(nodes.filter((_, i) => answers[i] === false).map((n) => n.id));
-}
-
-function hrefFor(node, { missing, links }) {
-  const linked = links.get(pathKey(node.urlPath));
-  if (linked) return linked;
-  const fallback = missing.has(node.id) ? searchFallbackHref(node.urlPath) : null;
-  return fallback || `/${node.urlPath}`;
-}
-
-function entryFor(document, node, pages) {
+function entryFor(document, node, links) {
   const li = document.createElement('li');
   const link = document.createElement('a');
-  link.href = hrefFor(node, pages);
+  link.href = hrefFor(node, links);
   link.textContent = node.name;
   li.append(link);
   if (node.children.length) {
@@ -243,7 +228,7 @@ function entryFor(document, node, pages) {
     node.children.forEach((child) => {
       const item = document.createElement('li');
       const childLink = document.createElement('a');
-      childLink.href = hrefFor(child, pages);
+      childLink.href = hrefFor(child, links);
       childLink.textContent = child.name;
       item.append(childLink);
       list.append(item);
@@ -259,10 +244,10 @@ function plainEntry(document, text) {
   return li;
 }
 
-function renderLine(line, tree, logger, pages) {
+function renderLine(line, tree, logger, links) {
   const document = line.li.ownerDocument;
   if (!line.name) {
-    line.li.replaceWith(...tree.map((node) => entryFor(document, node, pages)));
+    line.li.replaceWith(...tree.map((node) => entryFor(document, node, links)));
     return;
   }
   const node = findByName(tree, line.name);
@@ -271,7 +256,7 @@ function renderLine(line, tree, logger, pages) {
     line.li.replaceWith(plainEntry(document, line.name));
     return;
   }
-  line.li.replaceWith(entryFor(document, node, pages));
+  line.li.replaceWith(entryFor(document, node, links));
 }
 
 /** Without the catalog: bare lines go, named lines keep their words. */
@@ -301,11 +286,8 @@ function removeBlock(block) {
  * @param {Function} fetchGraphQl the storefront's Catalog Service client
  *   (`CS_FETCH_GRAPHQL.fetchGraphQl`), so the shopper's own scope headers apply
  * @param {{warn: Function, error: Function}} logger console by default
- * @param {Function} [pageExists] answers whether the storefront has a page at a path;
- *   a category without one links to the filtered search page. Absent: no check. A
- *   category the block's table links to a page is never checked.
  */
-export async function buildCatalogMenu(block, fetchGraphQl, logger = console, pageExists = null) {
+export async function buildCatalogMenu(block, fetchGraphQl, logger = console) {
   const root = block.closest('main') || block.ownerDocument;
   const lines = findMenuLines(root);
   const links = readPageLinks(block);
@@ -315,9 +297,8 @@ export async function buildCatalogMenu(block, fetchGraphQl, logger = console, pa
   try {
     const data = await runQuery(fetchGraphQl, CATEGORIES_QUERY, { roles: MENU_ROLES });
     let tree = buildTree(data.categories);
-    if (FILTER_BY_VISIBLE_PRODUCTS) tree = await keepVisible(tree, fetchGraphQl);
-    const missing = await missingPages(tree, pageExists, links);
-    lines.forEach((line) => renderLine(line, tree, logger, { missing, links }));
+    if (FILTER_BY_VISIBLE_PRODUCTS) tree = await keepVisible(tree, lines, fetchGraphQl);
+    lines.forEach((line) => renderLine(line, tree, logger, links));
   } catch (error) {
     logger.error(`catalog-menu: could not read the category tree: ${error.message}`);
     renderWithoutCatalog(lines);

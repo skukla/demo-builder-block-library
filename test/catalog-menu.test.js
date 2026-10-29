@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-import { buildCatalogMenu, readPageLinks, searchFallbackHref } from '../blocks/catalog-menu/catalog-menu-core.js';
+import { buildCatalogMenu, readPageLinks } from '../blocks/catalog-menu/catalog-menu-core.js';
 import decorate from '../blocks/catalog-menu/catalog-menu.js';
 
 const CATEGORIES = [
@@ -258,54 +258,100 @@ test('in its own section (where Demo Builder puts it) the block takes that secti
   assert.equal(document.querySelector('main > .section:last-child').textContent.trim(), 'Tools');
 });
 
-test('a category with no page yet links to the search page filtered to it; one with a page keeps its link', async () => {
-  // A category added in Commerce after setup: in the menu at once, its page only at
-  // the next republish or reset. Until then the link must not land on a 404.
-  const { document, block } = setup('<li>Commerce: All</li>');
-  const probed = [];
-  const pageExists = async (path) => {
-    probed.push(path);
-    return path !== '/safety-signs/fire-signs';
+/*
+ * Unpublished pages. A category added in Commerce after setup is in the menu at once,
+ * before its page is published. The storefront's 404 page publishes that page on a
+ * shopper's first visit, so the menu links the category's own address and never asks
+ * whether the page is there.
+ */
+
+/** A level below the sub-categories, reachable only from a line that names its parent. */
+const ILLUMINATED = {
+  id: '44', name: 'Illuminated Exit Signs', level: 4, parentId: '42', position: 1, urlPath: 'safety-signs/exit-signs/illuminated', roles: ['active', 'show_in_menu'], children: [],
+};
+
+/** Every request the block makes outside its Catalog Service client. */
+function recordPageRequests(t) {
+  const requests = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), method: init?.method });
+    return { ok: false, status: 404 };
   };
-  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
-
-  assert.equal(linkOf(document, 'Fire Signs'), '/search?filter=categoryPath%3Asafety-signs%2Ffire-signs');
-  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
-  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
-  assert.ok(probed.includes('/safety-cabinets/flammable'));
-});
-
-test('a page check that fails leaves the link as it is', async () => {
-  const { document, block } = setup('<li>Commerce: All</li>');
-  const pageExists = async () => {
-    throw new Error('offline');
-  };
-  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
-  assert.equal(linkOf(document, 'Fire Signs'), '/safety-signs/fire-signs');
-});
-
-test('the fallback is the filter the search page reads back to the same category', () => {
-  // search-url.js: URLSearchParams.get decodes once, then decodeURIComponent again,
-  // then splits "attribute:value" on the first colon.
-  const href = searchFallbackHref('signs/danger-signs');
-  const filter = new URL(href, 'https://example.com').searchParams.get('filter');
-  assert.equal(decodeURIComponent(filter), 'categoryPath:signs/danger-signs');
-  assert.equal(searchFallbackHref('5s-visual-workplace'), '/search?filter=categoryPath%3A5s-visual-workplace');
-});
-
-test('a url path the search page would misread (a number range, a comma) gets no fallback', () => {
-  assert.equal(searchFallbackHref('10-20'), null);
-  assert.equal(searchFallbackHref('a,b'), null);
-});
-
-test('decorate hands its page check to the menu', async () => {
-  const { document, block } = setup('<li>Commerce: All</li>');
-  await decorate(block, {
-    fetchGraphQl: fakeFetch().fetchGraphQl,
-    logger: quietLogger().logger,
-    pageExists: async (path) => path !== '/safety-cabinets',
+  t.after(() => {
+    globalThis.fetch = original;
   });
-  assert.equal(linkOf(document, 'Safety Cabinets'), '/search?filter=categoryPath%3Asafety-cabinets');
+  return requests;
+}
+
+const allLinks = (document) => [...document.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+
+test('every category links its own address, published or not: the block asks for no page', async (t) => {
+  const requests = recordPageRequests(t);
+  const { document, block } = setup('<li>Commerce: All</li>');
+  await decorate(block, { fetchGraphQl: fakeFetch().fetchGraphQl, logger: quietLogger().logger });
+
+  assert.deepEqual(requests, []);
+  assert.deepEqual(allLinks(document), [
+    '/safety-cabinets', '/safety-cabinets/flammable',
+    '/safety-signs', '/safety-signs/exit-signs', '/safety-signs/fire-signs',
+    '/guides',
+  ]);
+});
+
+test('a named line below the top level links its sub-categories to their own addresses', async (t) => {
+  const requests = recordPageRequests(t);
+  const { document, block } = setup('<li>Commerce: Exit Signs</li>');
+  const { fetchGraphQl } = fakeFetch({ categories: [...CATEGORIES, ILLUMINATED] });
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
+
+  assert.deepEqual(requests, []);
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
+  assert.equal(linkOf(document, 'Illuminated Exit Signs'), '/safety-signs/exit-signs/illuminated');
+});
+
+test('B2B: under a named line at any depth, a sub-category the shopper\'s group cannot search is left out', async () => {
+  const { document, block } = setup('<li>Commerce: Exit Signs</li>');
+  const { fetchGraphQl, calls } = fakeFetch({
+    categories: [...CATEGORIES, ILLUMINATED],
+    empty: ['safety-signs/exit-signs/illuminated'],
+  });
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
+
+  assert.equal(linkOf(document, 'Illuminated Exit Signs'), undefined);
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
+  // Still one search request, asking about exactly what the line draws.
+  assert.equal(calls.length, 2);
+  assert.deepEqual(
+    Object.values(calls[1].variables).sort(),
+    ['safety-signs/exit-signs', 'safety-signs/exit-signs/illuminated'],
+  );
+});
+
+test('B2B: a named category the shopper can see none of is plain text, at any depth', async () => {
+  const { document, block } = setup('<li>Commerce: Exit Signs</li>');
+  const log = quietLogger();
+  const { fetchGraphQl } = fakeFetch({
+    categories: [...CATEGORIES, ILLUMINATED],
+    empty: ['safety-signs/exit-signs', 'safety-signs/exit-signs/illuminated'],
+  });
+  await buildCatalogMenu(block, fetchGraphQl, log.logger);
+
+  assert.deepEqual(topLevel(document), ['Custom Signs', 'Exit Signs', 'Resources']);
+  assert.equal(linkOf(document, 'Exit Signs'), undefined);
+  assert.equal(log.warnings.length, 1);
+});
+
+test('B2B: a named category with nothing of its own stays when one of its sub-categories is visible', async () => {
+  const { document, block } = setup('<li>Commerce: Exit Signs</li>');
+  const { fetchGraphQl } = fakeFetch({
+    categories: [...CATEGORIES, ILLUMINATED],
+    empty: ['safety-signs/exit-signs'],
+  });
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
+
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
+  assert.equal(linkOf(document, 'Illuminated Exit Signs'), '/safety-signs/exit-signs/illuminated');
 });
 
 /*
@@ -336,20 +382,16 @@ test('a row works for a sub-category and under a named line too', async () => {
   assert.equal(linkOf(document, 'Safety Signs'), '/safety-signs');
 });
 
-test('a category with a row has a page: it is not probed and never falls back to search', async () => {
-  const { document, block } = setup('<li>Commerce: All</li>', pageRow('safety-signs', '/safety-signage'));
-  const probed = [];
-  const pageExists = async (path) => {
-    probed.push(path);
-    return false;
-  };
-  await buildCatalogMenu(block, fakeFetch().fetchGraphQl, quietLogger().logger, pageExists);
+test('a row works for a sub-category under a named line below the top level', async () => {
+  const { document, block } = setup(
+    '<li>Commerce: Exit Signs</li>',
+    pageRow('safety-signs/exit-signs/illuminated', '/illuminated'),
+  );
+  const { fetchGraphQl } = fakeFetch({ categories: [...CATEGORIES, ILLUMINATED] });
+  await buildCatalogMenu(block, fetchGraphQl, quietLogger().logger);
 
-  assert.equal(linkOf(document, 'Safety Signs'), '/safety-signage');
-  assert.ok(!probed.includes('/safety-signs'));
-  assert.ok(!probed.includes('/safety-signage'));
-  // An unmapped category with no page still gets the search fallback.
-  assert.equal(linkOf(document, 'Safety Cabinets'), '/search?filter=categoryPath%3Asafety-cabinets');
+  assert.equal(linkOf(document, 'Illuminated Exit Signs'), '/illuminated');
+  assert.equal(linkOf(document, 'Exit Signs'), '/safety-signs/exit-signs');
 });
 
 test('rows are read the way an author types them: any case, stray slashes, paragraphs, a pasted link', () => {

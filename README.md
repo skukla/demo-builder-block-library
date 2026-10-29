@@ -51,12 +51,10 @@ it at the end).
   Demo Builder writes a row for each hand-built category page it finds (a page whose
   `product-list-page` block names the category), and writes no page of its own for
   that category. Rows you type are yours: Demo Builder never changes or removes them.
-  A category with a row is taken to have a page, so it is not checked and never falls
-  back to search.
-- A category added in Commerce after that is in the menu at once, before its page
-  exists. Until the next republish its link goes to the search page filtered to that
-  category (`/search?filter=categoryPath:<url path>`), so it never lands on a 404. The
-  block checks each shown category with one `HEAD` request to its page.
+- A category added in Commerce after that is in the menu at once, before its page is
+  published. Its link still goes to `/<category url path>`: the storefront's 404 page
+  publishes that page on a shopper's first visit, and sends the shopper to search itself
+  when the store cannot be asked. The block never checks whether a page is there.
 
 **How it works.** The header loads the nav as a fragment, and the fragment decorates
 and loads its blocks before the header reads the list. This block runs then, reads
@@ -65,8 +63,10 @@ client (`CS_FETCH_GRAPHQL` in `scripts/commerce.js`), and rewrites the lines.
 
 **B2B.** On a B2B website a category is invisible to a customer group until a shared
 catalog grants it. Until it is proven that the `categories` read honours those grants,
-the block also asks product search, as the current shopper, whether each category has
-anything to show, and leaves out the ones that do not. `FILTER_BY_VISIBLE_PRODUCTS` in
+the block also asks product search, as the current shopper, whether each category the
+menu draws has anything to show (under a named line too, at any depth), and leaves out
+the ones that do not. A parent stays when one of its sub-categories is visible. It is
+one request per page load, however many lines. `FILTER_BY_VISIBLE_PRODUCTS` in
 `catalog-menu-core.js` switches that off.
 
 **Needs.** A storefront built on the Adobe Commerce boilerplate that exports

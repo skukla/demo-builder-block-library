@@ -20,17 +20,10 @@ async function storefrontClient() {
   const { CS_FETCH_GRAPHQL } = await import('../../scripts/commerce.js');
   return {
     fetchGraphQl: (query, options) => CS_FETCH_GRAPHQL.fetchGraphQl(query, options),
-    pageExists,
   };
-}
-
-/** Whether the storefront has a page at this path: aem.live answers 404 when it does not. */
-async function pageExists(path) {
-  const response = await fetch(path, { method: 'HEAD' });
-  return response.status !== 404;
 }
 
 export default async function decorate(block, deps) {
   const client = deps || await storefrontClient();
-  await buildCatalogMenu(block, client.fetchGraphQl, client.logger, client.pageExists);
+  await buildCatalogMenu(block, client.fetchGraphQl, client.logger);
 }
