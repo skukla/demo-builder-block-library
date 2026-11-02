@@ -82,3 +82,5 @@ npm test
 
 Node's own test runner with jsdom standing in for the browser. Tests live in `test/`,
 outside `blocks/`, so they are never copied into a storefront.
+
+**Releasing:** a push to `main` reaches nobody; a published release does. See [RELEASING.md](RELEASING.md).

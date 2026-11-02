@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate the package.json version
+        run: |
+          node -e "const v = require('./package.json').version; if (!/^[0-9]+[.][0-9]+[.][0-9]+(-(alpha|beta)[.][0-9]+)?$/.test(v)) { console.error('Not a valid version in package.json', v); process.exit(1); }"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
