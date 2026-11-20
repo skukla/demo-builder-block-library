@@ -1,7 +1,7 @@
 {
   "name": "demo-builder-block-library",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0-beta.1",
   "description": "Optional Edge Delivery Services blocks that Demo Builder can copy into a storefront",
   "type": "module",
   "scripts": {
